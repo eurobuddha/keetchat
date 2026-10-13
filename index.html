@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeetChat</title>
+<script type="text/javascript" src="mds.js"></script>
+<style>
+:root { --bg:#101828; --panel:#1b2437; --panel2:#232e47; --text:#e7ecf5; --dim:#8b97ad; --accent:#22d3ee; --me:#0e7490; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif; height:100vh; display:flex; flex-direction:column; }
+header { padding:10px 14px; background:var(--panel); border-bottom:1px solid #000; }
+header h1 { font-size:17px; color:var(--accent); display:inline; }
+#mode { font-size:11px; color:var(--dim); margin-left:8px; }
+#mypub { font:12px ui-monospace,Menlo,monospace; color:var(--dim); word-break:break-all; margin-top:4px; cursor:pointer; }
+#mypub:hover { color:var(--accent); }
+#status { font-size:12px; color:var(--dim); float:right; }
+#rpcbar { padding:8px 14px; background:#3b2b12; display:none; }
+#rpcbar input { width:280px; max-width:60%; padding:6px; border-radius:6px; border:1px solid #333; background:var(--bg); color:var(--text); }
+#main { flex:1; display:flex; min-height:0; }
+#contacts { width:290px; min-width:200px; background:var(--panel); border-right:1px solid #000; display:flex; flex-direction:column; }
+#contactlist { flex:1; overflow-y:auto; }
+.contact { padding:10px 12px; border-bottom:1px solid #1118; cursor:pointer; }
+.contact.sel { background:var(--panel2); border-left:3px solid var(--accent); }
+.contact .cname { font-weight:600; word-break:break-all; }
+.contact .cpub { font:10px ui-monospace,monospace; color:var(--dim); word-break:break-all; }
+#addbox { padding:10px; border-top:1px solid #000; }
+#addbox input { width:100%; margin-bottom:6px; padding:7px; border-radius:6px; border:1px solid #333; background:var(--bg); color:var(--text); font-size:13px; }
+button { background:var(--accent); color:#06222a; border:0; border-radius:6px; padding:7px 14px; font-weight:700; cursor:pointer; }
+.mini { padding:2px 8px; font-size:11px; margin-left:6px; }
+#chat { flex:1; display:flex; flex-direction:column; min-width:0; }
+#chathead { padding:10px 14px; background:var(--panel); border-bottom:1px solid #000; }
+#chathead .cpub { font:11px ui-monospace,monospace; color:var(--dim); word-break:break-all; }
+#msgs { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:8px; }
+.bubble { max-width:72%; padding:8px 12px; border-radius:12px; white-space:pre-wrap; word-break:break-word; }
+.in  { background:var(--panel2); align-self:flex-start; }
+.out { background:var(--me); align-self:flex-end; }
+.meta { font-size:10px; color:var(--dim); margin-top:3px; }
+#sendrow { display:flex; gap:8px; padding:12px; background:var(--panel); border-top:1px solid #000; }
+#sendtext { flex:1; padding:9px; border-radius:8px; border:1px solid #333; background:var(--bg); color:var(--text); font-size:15px; }
+#empty { margin:auto; color:var(--dim); text-align:center; padding:20px; }
+@media (max-width:640px){ #contacts{ width:40%; } .bubble{ max-width:88%; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>KeetChat</h1><span id="mode"></span> <span id="status"></span>
+  <div id="mypub">connecting…</div>
+</header>
+<div id="rpcbar">
+  No MDS detected — plain RPC mode. Node RPC url:
+  <input id="rpcurl" placeholder="http://127.0.0.1:9005">
+  <button class="mini" onclick="setRpc()">connect</button>
+</div>
+
+<div id="main">
+  <div id="contacts">
+    <div id="contactlist"></div>
+    <div id="addbox">
+      <input id="addname" placeholder="Contact name">
+      <input id="addpub" placeholder="0x… their keets pubkey (64 hex)">
+      <button onclick="addContact()">Add contact</button>
+    </div>
+  </div>
+  <div id="chat">
+    <div id="chathead" style="display:none">
+      <span id="selname"></span><button class="mini" onclick="renameContact()">rename</button>
+      <div class="cpub" id="selpub"></div>
+    </div>
+    <div id="msgs"><div id="empty">Add a contact and say hello.<br><br>Your address is your keets pubkey above —<br>share it by QR or any channel. No server, no setup.</div></div>
+    <div id="sendrow" style="display:none">
+      <input id="sendtext" placeholder="Message… (enter to send)" onkeydown="if(event.key==='Enter')sendMsg()">
+      <button onclick="sendMsg()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* KeetChat — reference chat over keets. Runs in TWO modes:
+ *  MDS mode : inside a Minima node's MDS — commands via MDS.cmd, storage via
+ *             MDS.sql, inbound messages pushed as KEETS events (service.js
+ *             persists them; the node acks the sidecar inbox after the event).
+ *  RPC mode : plain page against a node RPC port (CORS is open) — this page
+ *             polls 'keets action:inbox', stores to localStorage and acks
+ *             itself. This is the mode for nodes without MDS.
+ */
+var MODE = null;        // "mds" | "rpc"
+var RPC  = "";
+var MYPUB = "";
+var SEL = null, SELNAME = "";
+
+function esc(s){ return (""+s).replace(/'/g,"''"); }
+function h(s){ var d=document.createElement("div"); d.innerText=(""+s); return d.innerHTML; }
+function hexOf(s){ var b=new TextEncoder().encode(s),o="0x"; for(var i=0;i<b.length;i++){o+=b[i].toString(16).padStart(2,"0");} return o; }
+function setStatus(s){ document.getElementById("status").innerText=s; setTimeout(function(){document.getElementById("status").innerText="";},5000); }
+
+/* ---- command layer -------------------------------------------------- */
+function cmd(c, cb){
+  if(MODE==="mds"){ MDS.cmd(c, cb); }
+  else{
+    fetch(RPC+"/"+encodeURIComponent(c)).then(function(r){return r.json();}).then(cb)
+      .catch(function(e){ cb({status:false, error:""+e}); });
+  }
+}
+
+/* ---- storage layer --------------------------------------------------
+ * contacts: [{pubkey,name,added}]  messages: [{msgid,pubkey,incoming,body,ts,via}]
+ */
+var LS = { contacts:[], messages:[] };
+function lsLoad(){ try{ LS=JSON.parse(localStorage.getItem("keetchat"))||LS; }catch(e){} }
+function lsSave(){ try{ localStorage.setItem("keetchat", JSON.stringify(LS)); }catch(e){} }
+
+function getContacts(cb){
+  if(MODE==="mds"){
+    MDS.sql("SELECT * FROM contacts ORDER BY added ASC", function(res){
+      cb(res.status ? res.rows.map(function(r){return {pubkey:r.PUBKEY,name:r.NAME};}) : []);
+    });
+  }else{ cb(LS.contacts); }
+}
+function putContact(pubkey, name, cb){
+  if(MODE==="mds"){
+    MDS.sql("SELECT pubkey FROM contacts WHERE pubkey='"+esc(pubkey)+"'", function(res){
+      var q=(res.status&&res.rows.length>0)
+        ? "UPDATE contacts SET name='"+esc(name)+"' WHERE pubkey='"+esc(pubkey)+"'"
+        : "INSERT INTO contacts (pubkey,name,added) VALUES ('"+esc(pubkey)+"','"+esc(name)+"',"+Date.now()+")";
+      MDS.sql(q, cb);
+    });
+  }else{
+    var c=LS.contacts.find(function(x){return x.pubkey===pubkey;});
+    if(c){ c.name=name; } else { LS.contacts.push({pubkey:pubkey,name:name,added:Date.now()}); }
+    lsSave(); cb();
+  }
+}
+function getMsgs(pubkey, cb){
+  if(MODE==="mds"){
+    MDS.sql("SELECT * FROM messages WHERE pubkey='"+esc(pubkey)+"' ORDER BY ts ASC, id ASC", function(res){
+      cb(res.status ? res.rows.map(function(r){return {body:r.BODY,incoming:parseInt(r.INCOMING),ts:parseInt(r.TS),via:r.VIA};}) : []);
+    });
+  }else{
+    cb(LS.messages.filter(function(m){return m.pubkey===pubkey;}).sort(function(a,b){return a.ts-b.ts;}));
+  }
+}
+function putMsg(m, cb){
+  if(MODE==="mds"){
+    MDS.sql("INSERT INTO messages (msgid,pubkey,incoming,body,ts,via) VALUES ('"+esc(m.msgid)+"','"+esc(m.pubkey)+"',"+(m.incoming?1:0)+",'"+esc(m.body)+"',"+m.ts+",'"+esc(m.via)+"')", cb);
+  }else{
+    if(!LS.messages.find(function(x){return x.msgid===m.msgid;})){ LS.messages.push(m); lsSave(); }
+    cb();
+  }
+}
+
+/* ---- rpc-mode inbox poll (self-ack) --------------------------------- */
+function pollInbox(){
+  if(MODE!=="rpc"){ return; }
+  cmd("keets action:inbox", function(res){
+    if(!res.status || !res.response.length){ return; }
+    res.response.forEach(function(msg){
+      putContactIfNew(msg.from, function(){
+        putMsg({msgid:msg.id, pubkey:msg.from, incoming:1, body:msg.message, ts:parseInt(msg.ts), via:msg.via}, function(){
+          cmd("keets action:ack id:"+msg.id, function(){});
+        });
+      });
+    });
+    setTimeout(refresh, 300);
+  });
+}
+function putContactIfNew(pubkey, cb){
+  getContacts(function(cs){
+    if(cs.find(function(c){return c.pubkey===pubkey;})){ cb(); }
+    else{ putContact(pubkey, pubkey, cb); }   // default name = FULL pubkey, never truncated
+  });
+}
+
+/* ---- ui -------------------------------------------------------------- */
+function copyMyPub(){
+  var t=document.createElement("textarea"); t.value=MYPUB; document.body.appendChild(t);
+  t.select(); document.execCommand("copy"); document.body.removeChild(t);
+  setStatus("address copied");
+}
+function loadInfo(){
+  cmd("keets action:info", function(res){
+    var el=document.getElementById("mypub");
+    if(res.status){
+      MYPUB=res.response.pubkey;
+      el.innerText="your address: "+MYPUB+"  (tap to copy)";
+      el.onclick=copyMyPub;
+    }else{
+      el.innerText="keets not available: "+(res.error||"node unreachable")+" — node needs -keets";
+    }
+  });
+}
+function refreshContacts(){
+  getContacts(function(cs){
+    var el=document.getElementById("contactlist"); el.innerHTML="";
+    cs.forEach(function(r){
+      var d=document.createElement("div");
+      d.className="contact"+(r.pubkey===SEL?" sel":"");
+      d.innerHTML="<div class='cname'>"+h(r.name)+"</div><div class='cpub'>"+h(r.pubkey)+"</div>";
+      d.onclick=function(){ selectContact(r.pubkey, r.name); };
+      el.appendChild(d);
+    });
+  });
+}
+function selectContact(pub, name){
+  SEL=pub; SELNAME=name;
+  document.getElementById("chathead").style.display="block";
+  document.getElementById("sendrow").style.display="flex";
+  document.getElementById("selname").innerText=name;
+  document.getElementById("selpub").innerText=pub;
+  refreshContacts(); refreshMsgs(true);
+}
+function refreshMsgs(scroll){
+  if(!SEL){ return; }
+  getMsgs(SEL, function(ms){
+    var el=document.getElementById("msgs"); el.innerHTML="";
+    ms.forEach(function(m){
+      var d=document.createElement("div");
+      d.className="bubble "+(m.incoming?"in":"out");
+      d.innerHTML=h(m.body)+"<div class='meta'>"+new Date(m.ts).toLocaleString()+(m.via?" · "+h(m.via):"")+"</div>";
+      el.appendChild(d);
+    });
+    if(scroll){ el.scrollTop=el.scrollHeight; }
+  });
+}
+function refresh(){ refreshContacts(); refreshMsgs(false); }
+
+function addContact(){
+  var name=document.getElementById("addname").value.trim();
+  var pub=document.getElementById("addpub").value.trim();
+  if(!/^0x[0-9a-fA-F]{64}$/.test(pub)){ setStatus("pubkey must be 0x + 64 hex"); return; }
+  pub=pub.toLowerCase();
+  if(!name){ name=pub; }
+  putContact(pub, name, function(){
+    document.getElementById("addname").value=""; document.getElementById("addpub").value="";
+    selectContact(pub, name);
+  });
+}
+function renameContact(){
+  if(!SEL){ return; }
+  var name=prompt("Contact name", SELNAME);
+  if(!name){ return; }
+  putContact(SEL, name, function(){ SELNAME=name; document.getElementById("selname").innerText=name; refreshContacts(); });
+}
+function sendMsg(){
+  var inp=document.getElementById("sendtext");
+  var text=inp.value;
+  if(!text.trim() || !SEL){ return; }
+  inp.value=""; setStatus("sending…");
+  // datahex avoids every quoting pitfall in command params
+  cmd("keets action:send to:"+SEL+" datahex:"+hexOf(text), function(res){
+    var via=(res.status && res.response.delivered) ? res.response.delivered : "FAILED";
+    if(via==="FAILED"){ setStatus("send failed: "+(res.error||"unknown")); }
+    else{ setStatus(via==="direct" ? "delivered direct" : "stored at a mailbox — delivered when they come online"); }
+    putMsg({msgid:"out-"+Date.now()+"-"+Math.floor(Math.random()*1e6), pubkey:SEL, incoming:0, body:text, ts:Date.now(), via:via}, function(){ refreshMsgs(true); });
+  });
+}
+
+/* ---- startup: detect MDS, else RPC mode ------------------------------ */
+function startRpcMode(){
+  MODE="rpc";
+  lsLoad();
+  var saved=""; try{ saved=localStorage.getItem("keetchat-rpc")||""; }catch(e){}
+  var q=new URLSearchParams(location.search).get("rpc");
+  RPC=(q||saved||"").replace(/\/+$/,"");
+  document.getElementById("mode").innerText="rpc mode";
+  document.getElementById("rpcbar").style.display="block";
+  document.getElementById("rpcurl").value=RPC||"http://127.0.0.1:9005";
+  if(RPC){ connectRpc(); }
+}
+function setRpc(){
+  RPC=document.getElementById("rpcurl").value.trim().replace(/\/+$/,"");
+  try{ localStorage.setItem("keetchat-rpc", RPC); }catch(e){}
+  connectRpc();
+}
+function connectRpc(){
+  loadInfo(); refresh();
+  if(!window._pollTimer){
+    window._pollTimer=setInterval(function(){ pollInbox(); refresh(); }, 5000);
+  }
+  pollInbox();
+}
+
+var mdsInited=false;
+MDS.init(function(msg){
+  if(msg.event==="inited"){
+    mdsInited=true; MODE="mds";
+    document.getElementById("mode").innerText="mds mode";
+    loadInfo(); refresh();
+    setInterval(refresh, 5000);
+  }else if(msg.event==="KEETS"){
+    setTimeout(function(){ refreshMsgs(true); refreshContacts(); }, 400); // service.js inserts
+  }
+});
+setTimeout(function(){ if(!mdsInited){ startRpcMode(); } }, 2500);
+</script>
+</body>
+</html>
