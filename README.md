@@ -13,9 +13,9 @@ Requires a node running with `-keets` (minima-core `main` ≥ `ea37438033` /
 | mode | when | commands | storage | inbound |
 |---|---|---|---|---|
 | **RPC** | opened as a plain page against a node RPC port (family nodes — MDS is stripped from them) | `fetch()` to the RPC (CORS is open) | localStorage | polls `keets action:inbox` every 5s, acks after storing |
+| **MDS** | installed as a MiniDapp on an MDS-capable node | `MDS.cmd` | MDS SQL (service.js) | MDS event `KEETS` pushed by the node, which acks after posting |
 
 **Inbox ownership (RPC mode):** exactly one client may drain a node's inbox. Don't run the RPC page against a node whose host app (desktop Chat tab, phone app) already drains `keets action:inbox` — they would steal messages from each other.
-| **MDS** | installed as a MiniDapp on an MDS-capable node | `MDS.cmd` | MDS SQL (service.js) | MDS event `KEETS` pushed by the node, which acks after posting |
 
 Open `index.html?rpc=http://127.0.0.1:9005` (RPC port = Minima port + 4), or install
 `keetchat-<ver>.mds.zip` on an MDS node (`-mdsinit` folder or MiniHub).
