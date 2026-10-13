@@ -11,6 +11,8 @@
  *    incoming ones (no double-insert when the UI is open)
  */
 
+MDS.load("./chatschema.js");
+
 function esc(s) {
     return ("" + s).replace(/'/g, "''");
 }
@@ -25,39 +27,43 @@ function createTables(cb) {
         " `ts` bigint NOT NULL," +
         " `via` varchar(16) NOT NULL" +            // direct | mailbox | '' (outgoing pending)
         ")", function () {
-        MDS.sql("CREATE TABLE IF NOT EXISTS `contacts` (" +
-            " `pubkey` varchar(170) NOT NULL PRIMARY KEY," +
-            " `name` varchar(255) NOT NULL," +
-            " `added` bigint NOT NULL" +
-            ")", cb);
+        // 0.2.0 schema: optional keets:// media reference per message
+        MDS.sql("ALTER TABLE `messages` ADD COLUMN IF NOT EXISTS `ref` varchar(512) DEFAULT ''", function () {
+            MDS.sql("CREATE TABLE IF NOT EXISTS `contacts` (" +
+                " `pubkey` varchar(170) NOT NULL PRIMARY KEY," +
+                " `name` varchar(255) NOT NULL," +
+                " `added` bigint NOT NULL" +
+                ")", cb);
+        });
     });
 }
 
-function ensureContact(pubkey, cb) {
+function ensureContact(pubkey, senderName, cb) {
     MDS.sql("SELECT pubkey FROM contacts WHERE pubkey='" + esc(pubkey) + "'", function (res) {
         if (res.status && res.rows.length === 0) {
-            // default name = the full pubkey — never truncate an identifier
+            // default name = the sender's self-declared name, else the FULL pubkey
+            var name = senderName || pubkey;
             MDS.sql("INSERT INTO contacts (pubkey, name, added) VALUES " +
-                "('" + esc(pubkey) + "','" + esc(pubkey) + "'," + Date.now() + ")", cb);
+                "('" + esc(pubkey) + "','" + esc(name) + "'," + Date.now() + ")", cb);
         } else if (cb) { cb(); }
     });
 }
 
 function storeIncoming(data) {
-    var msgid = data.id;
     var from = data.from;
-    var body = data.message;  // utf8 decode done by the node
-    var ts = parseInt(data.ts);
     var via = data.via;
-    // dedupe on the keets message id
+    var m = chatDecode(data.message);           // schema JSON or legacy plain text
+    var msgid = m.id || data.id;                // schema id dedupes across transports
+    var ts = m.ts || parseInt(data.ts);
+    // dedupe on the message id
     MDS.sql("SELECT id FROM messages WHERE msgid='" + esc(msgid) + "'", function (res) {
         if (!res.status || res.rows.length > 0) { return; }
-        ensureContact(from, function () {
-            MDS.sql("INSERT INTO messages (msgid, pubkey, incoming, body, ts, via) VALUES " +
-                "('" + esc(msgid) + "','" + esc(from) + "',1,'" + esc(body) + "'," + ts + ",'" + esc(via) + "')",
+        ensureContact(from, m.name, function () {
+            MDS.sql("INSERT INTO messages (msgid, pubkey, incoming, body, ts, via, ref) VALUES " +
+                "('" + esc(msgid) + "','" + esc(from) + "',1,'" + esc(m.body) + "'," + ts + ",'" + esc(via) + "','" + esc(m.ref) + "')",
                 function () {
                     MDS.log("KeetChat stored message from " + from + " via " + via);
-                    MDS.notify("KeetChat: new message");
+                    MDS.notify("KeetChat: " + (m.name ? m.name + ": " : "new message ") + m.body.slice(0, 80));
                     // nudge any open UI to refresh
                     MDS.comms.broadcast("keetchat-refresh", function () {});
                 });

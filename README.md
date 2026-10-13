@@ -13,6 +13,8 @@ Requires a node running with `-keets` (minima-core `main` ≥ `ea37438033` /
 | mode | when | commands | storage | inbound |
 |---|---|---|---|---|
 | **RPC** | opened as a plain page against a node RPC port (family nodes — MDS is stripped from them) | `fetch()` to the RPC (CORS is open) | localStorage | polls `keets action:inbox` every 5s, acks after storing |
+
+**Inbox ownership (RPC mode):** exactly one client may drain a node's inbox. Don't run the RPC page against a node whose host app (desktop Chat tab, phone app) already drains `keets action:inbox` — they would steal messages from each other.
 | **MDS** | installed as a MiniDapp on an MDS-capable node | `MDS.cmd` | MDS SQL (service.js) | MDS event `KEETS` pushed by the node, which acks after posting |
 
 Open `index.html?rpc=http://127.0.0.1:9005` (RPC port = Minima port + 4), or install
@@ -33,6 +35,24 @@ keets action:publish path:/nft/a.png datahex:0x.. -> { url: keets://... , hash }
 keets action:fetch url:keets://...               -> { datahex, size }
 keets action:pin url:... | pins | unpin drive:...
 ```
+
+## Message wire schema (0.2.0+) — Parlons-compatible
+
+Chat payloads are JSON with Parlons-native field names (`maxima_chat_v1` — see
+ChatMessage.java in the maxima repo), hex-encoded into `datahex:`:
+
+```json
+{ "application":"maxima_chat_v1", "id":"kc-<ts>-<rand>", "body":"<text>",
+  "name":"<sender display name>", "ref":"<optional keets:// media url>", "ts":<ms> }
+```
+
+- `ref` carries media: publish the file with `keets action:publish`, send the
+  hash-pinned `keets://` url (messages cap at 256KB; media rides Hyperdrive).
+- `id` is the cross-transport dedupe key; receivers fall back to the keets inbox id.
+- Legacy plain-text payloads (0.1.0) are still accepted on receive.
+- The same payload parses unchanged in Parlons native once parlons-node gains the
+  keets transport; classic-Maxima contacts are reachable via Parlons' existing
+  maxsolo bridge. Helper: `chatschema.js` (chatEncode/chatDecode).
 
 MDS event (only when MDS is enabled — the node pushes and acks for you):
 

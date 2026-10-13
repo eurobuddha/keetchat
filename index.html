@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KeetChat</title>
 <script type="text/javascript" src="mds.js"></script>
+<script type="text/javascript" src="chatschema.js"></script>
 <style>
 :root { --bg:#101828; --panel:#1b2437; --panel2:#232e47; --text:#e7ecf5; --dim:#8b97ad; --accent:#22d3ee; --me:#0e7490; }
 * { box-sizing:border-box; margin:0; padding:0; }
@@ -45,7 +46,7 @@ button { background:var(--accent); color:#06222a; border:0; border-radius:6px; p
 <body>
 
 <header>
-  <h1>KeetChat</h1><span id="mode"></span> <span id="status"></span>
+  <h1>KeetChat</h1><span id="mode"></span><button class="mini" onclick="setMyName()">name</button> <span id="status"></span>
   <div id="mypub">connecting…</div>
 </header>
 <div id="rpcbar">
@@ -88,7 +89,21 @@ button { background:var(--accent); color:#06222a; border:0; border-radius:6px; p
 var MODE = null;        // "mds" | "rpc"
 var RPC  = "";
 var MYPUB = "";
+var MYNAME = "";
 var SEL = null, SELNAME = "";
+
+function loadMyName(){
+  if(MODE==="mds"){ MDS.keypair.get("keetchat-name", function(res){ if(res.status && res.value){ MYNAME=res.value; } }); }
+  else{ try{ MYNAME=localStorage.getItem("keetchat-name")||""; }catch(e){} }
+}
+function setMyName(){
+  var n=prompt("Your display name (sent with your messages)", MYNAME);
+  if(n===null){ return; }
+  MYNAME=n.trim();
+  if(MODE==="mds"){ MDS.keypair.set("keetchat-name", MYNAME, function(){}); }
+  else{ try{ localStorage.setItem("keetchat-name", MYNAME); }catch(e){} }
+  setStatus(MYNAME ? "name set: "+MYNAME : "name cleared");
+}
 
 function esc(s){ return (""+s).replace(/'/g,"''"); }
 function h(s){ var d=document.createElement("div"); d.innerText=(""+s); return d.innerHTML; }
@@ -135,7 +150,7 @@ function putContact(pubkey, name, cb){
 function getMsgs(pubkey, cb){
   if(MODE==="mds"){
     MDS.sql("SELECT * FROM messages WHERE pubkey='"+esc(pubkey)+"' ORDER BY ts ASC, id ASC", function(res){
-      cb(res.status ? res.rows.map(function(r){return {body:r.BODY,incoming:parseInt(r.INCOMING),ts:parseInt(r.TS),via:r.VIA};}) : []);
+      cb(res.status ? res.rows.map(function(r){return {body:r.BODY,incoming:parseInt(r.INCOMING),ts:parseInt(r.TS),via:r.VIA,ref:r.REF||""};}) : []);
     });
   }else{
     cb(LS.messages.filter(function(m){return m.pubkey===pubkey;}).sort(function(a,b){return a.ts-b.ts;}));
@@ -143,7 +158,7 @@ function getMsgs(pubkey, cb){
 }
 function putMsg(m, cb){
   if(MODE==="mds"){
-    MDS.sql("INSERT INTO messages (msgid,pubkey,incoming,body,ts,via) VALUES ('"+esc(m.msgid)+"','"+esc(m.pubkey)+"',"+(m.incoming?1:0)+",'"+esc(m.body)+"',"+m.ts+",'"+esc(m.via)+"')", cb);
+    MDS.sql("INSERT INTO messages (msgid,pubkey,incoming,body,ts,via,ref) VALUES ('"+esc(m.msgid)+"','"+esc(m.pubkey)+"',"+(m.incoming?1:0)+",'"+esc(m.body)+"',"+m.ts+",'"+esc(m.via)+"','"+esc(m.ref||"")+"')", cb);
   }else{
     if(!LS.messages.find(function(x){return x.msgid===m.msgid;})){ LS.messages.push(m); lsSave(); }
     cb();
@@ -156,8 +171,9 @@ function pollInbox(){
   cmd("keets action:inbox", function(res){
     if(!res.status || !res.response.length){ return; }
     res.response.forEach(function(msg){
-      putContactIfNew(msg.from, function(){
-        putMsg({msgid:msg.id, pubkey:msg.from, incoming:1, body:msg.message, ts:parseInt(msg.ts), via:msg.via}, function(){
+      var m=chatDecode(msg.message);           // schema JSON or legacy plain text
+      putContactIfNew(msg.from, m.name, function(){
+        putMsg({msgid:(m.id||msg.id), pubkey:msg.from, incoming:1, body:m.body, ts:(m.ts||parseInt(msg.ts)), via:msg.via, ref:m.ref}, function(){
           cmd("keets action:ack id:"+msg.id, function(){});
         });
       });
@@ -165,10 +181,10 @@ function pollInbox(){
     setTimeout(refresh, 300);
   });
 }
-function putContactIfNew(pubkey, cb){
+function putContactIfNew(pubkey, senderName, cb){
   getContacts(function(cs){
     if(cs.find(function(c){return c.pubkey===pubkey;})){ cb(); }
-    else{ putContact(pubkey, pubkey, cb); }   // default name = FULL pubkey, never truncated
+    else{ putContact(pubkey, senderName||pubkey, cb); } // sender's name, else FULL pubkey (never truncated)
   });
 }
 
@@ -217,7 +233,8 @@ function refreshMsgs(scroll){
     ms.forEach(function(m){
       var d=document.createElement("div");
       d.className="bubble "+(m.incoming?"in":"out");
-      d.innerHTML=h(m.body)+"<div class='meta'>"+new Date(m.ts).toLocaleString()+(m.via?" · "+h(m.via):"")+"</div>";
+      var refline=m.ref?"<div class='meta'>media: "+h(m.ref)+"</div>":"";
+      d.innerHTML=h(m.body)+refline+"<div class='meta'>"+new Date(m.ts).toLocaleString()+(m.via?" · "+h(m.via):"")+"</div>";
       el.appendChild(d);
     });
     if(scroll){ el.scrollTop=el.scrollHeight; }
@@ -259,7 +276,7 @@ function sendMsg(){
 /* ---- startup: detect MDS, else RPC mode ------------------------------ */
 function startRpcMode(){
   MODE="rpc";
-  lsLoad();
+  lsLoad(); loadMyName();
   var saved=""; try{ saved=localStorage.getItem("keetchat-rpc")||""; }catch(e){}
   var q=new URLSearchParams(location.search).get("rpc");
   RPC=(q||saved||"").replace(/\/+$/,"");
@@ -286,7 +303,7 @@ MDS.init(function(msg){
   if(msg.event==="inited"){
     mdsInited=true; MODE="mds";
     document.getElementById("mode").innerText="mds mode";
-    loadInfo(); refresh();
+    loadMyName(); loadInfo(); refresh();
     setInterval(refresh, 5000);
   }else if(msg.event==="KEETS"){
     setTimeout(function(){ refreshMsgs(true); refreshContacts(); }, 400); // service.js inserts
