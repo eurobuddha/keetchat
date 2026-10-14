@@ -234,7 +234,10 @@ function refreshMsgs(scroll){
       var d=document.createElement("div");
       d.className="bubble "+(m.incoming?"in":"out");
       var refline=m.ref?"<div class='meta'>media: "+h(m.ref)+"</div>":"";
-      d.innerHTML=h(m.body)+refline+"<div class='meta'>"+new Date(m.ts).toLocaleString()+(m.via?" · "+h(m.via):"")+"</div>";
+      // a voice note's body is "M:SS|waveformhex" — label it rather than show raw hex
+      var shown=m.body;
+      if(m.ref && /^\d+:\d{2}\|[0-9a-f]+$/.test(m.body)) shown="\ud83c\udfa4 Voice note · "+m.body.split("|")[0];
+      d.innerHTML=h(shown)+refline+"<div class='meta'>"+new Date(m.ts).toLocaleString()+(m.via?" · "+h(m.via):"")+"</div>";
       el.appendChild(d);
     });
     if(scroll){ el.scrollTop=el.scrollHeight; }
