@@ -68,5 +68,14 @@ function chatDecode(raw) {
  * consumed, never a row, never a notification, never a contact.
  * Keep in sync with ChatSchema.java / ChatDrainer. */
 function isStoredState(state) {
-    return state === "" || state === "image" || state === "audio";
+    return state === "" || state === "image" || state === "audio" || state === "payment";
 }
+
+/* Display body for a stored message (payments carry no body - label them). */
+function contentBody(m) {
+    if (m.state === "payment") {
+        return "\ud83d\udcb8 " + (m.amt || "?") + " " + (m.tokname || "Minima");
+    }
+    return m.body;
+}
+

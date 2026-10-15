@@ -63,11 +63,12 @@ function storeIncoming(data) {
     MDS.sql("SELECT id FROM messages WHERE msgid='" + esc(msgid) + "' AND pubkey='" + esc(from) + "'", function (res) {
         if (!res.status || res.rows.length > 0) { return; }
         ensureContact(from, m.name, function () {
+            var body = contentBody(m);
             MDS.sql("INSERT INTO messages (msgid, pubkey, incoming, body, ts, via, ref) VALUES " +
-                "('" + esc(msgid) + "','" + esc(from) + "',1,'" + esc(m.body) + "'," + ts + ",'" + esc(via) + "','" + esc(m.ref) + "')",
+                "('" + esc(msgid) + "','" + esc(from) + "',1,'" + esc(body) + "'," + ts + ",'" + esc(via) + "','" + esc(m.ref) + "')",
                 function () {
                     MDS.log("KeetChat stored message from " + from + " via " + via);
-                    MDS.notify("KeetChat: " + (m.name ? m.name + ": " : "new message ") + m.body.slice(0, 80));
+                    MDS.notify("KeetChat: " + (m.name ? m.name + ": " : "new message ") + body.slice(0, 80));
                     // nudge any open UI to refresh
                     MDS.comms.broadcast("keetchat-refresh", function () {});
                 });

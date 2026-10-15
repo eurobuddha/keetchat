@@ -179,7 +179,7 @@ function pollInbox(){
       // no row, no contact row for the sender
       if(!m.legacy && !isStoredState(m.state)){ cmd("keets action:ack id:"+msg.id, function(){}); return; }
       putContactIfNew(msg.from, m.name, function(){
-        putMsg({msgid:(m.id||msg.id), pubkey:msg.from, incoming:1, body:m.body, ts:(m.ts||parseInt(msg.ts)), via:msg.via, ref:m.ref}, function(){
+        putMsg({msgid:(m.id||msg.id), pubkey:msg.from, incoming:1, body:contentBody(m), ts:(m.ts||parseInt(msg.ts)), via:msg.via, ref:m.ref}, function(){
           cmd("keets action:ack id:"+msg.id, function(){});
         });
       });
