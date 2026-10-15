@@ -53,6 +53,9 @@ button { background:var(--accent); color:#06222a; border:0; border-radius:6px; p
   No MDS detected — plain RPC mode. Node RPC url:
   <input id="rpcurl" placeholder="http://127.0.0.1:9005">
   <button class="mini" onclick="setRpc()">connect</button>
+  <div style="margin-top:4px;font-size:12px;opacity:.8">Point only at a BARE node:
+  this mode drains + acks the keets inbox itself, and a node app (minimaCore /
+  Parlons) already does that — two drainers each lose the other's messages.</div>
 </div>
 
 <div id="main">
@@ -172,6 +175,9 @@ function pollInbox(){
     if(!res.status || !res.response.length){ return; }
     res.response.forEach(function(msg){
       var m=chatDecode(msg.message);           // schema JSON or legacy plain text
+      // control states (read/payaddr/payaddr-req/unknown): ack + consume -
+      // no row, no contact row for the sender
+      if(!m.legacy && !isStoredState(m.state)){ cmd("keets action:ack id:"+msg.id, function(){}); return; }
       putContactIfNew(msg.from, m.name, function(){
         putMsg({msgid:(m.id||msg.id), pubkey:msg.from, incoming:1, body:m.body, ts:(m.ts||parseInt(msg.ts)), via:msg.via, ref:m.ref}, function(){
           cmd("keets action:ack id:"+msg.id, function(){});

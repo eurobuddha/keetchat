@@ -53,10 +53,14 @@ function storeIncoming(data) {
     var from = data.from;
     var via = data.via;
     var m = chatDecode(data.message);           // schema JSON or legacy plain text
+    // control states (read/payaddr/payaddr-req/unknown): consumed - no row,
+    // no notification, no contact row for the sender
+    if (!m.legacy && !isStoredState(m.state)) { return; }
     var msgid = m.id || data.id;                // schema id dedupes across transports
     var ts = m.ts || parseInt(data.ts);
-    // dedupe on the message id
-    MDS.sql("SELECT id FROM messages WHERE msgid='" + esc(msgid) + "'", function (res) {
+    // dedupe on (peer, message id) - ids are sender-chosen, so a global
+    // msgid dedupe would let one peer's id shadow another's message
+    MDS.sql("SELECT id FROM messages WHERE msgid='" + esc(msgid) + "' AND pubkey='" + esc(from) + "'", function (res) {
         if (!res.status || res.rows.length > 0) { return; }
         ensureContact(from, m.name, function () {
             MDS.sql("INSERT INTO messages (msgid, pubkey, incoming, body, ts, via, ref) VALUES " +

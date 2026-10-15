@@ -62,3 +62,11 @@ function chatDecode(raw) {
     return { id: null, body: "" + raw, name: "", ref: "", ts: null,
         state: "", addr: "", amt: "", tok: "", tokname: "", txid: "", legacy: true };
 }
+
+/* States that are CHAT CONTENT (stored + notified). Everything else -
+ * read / payaddr / payaddr-req / future unknowns - is a control message:
+ * consumed, never a row, never a notification, never a contact.
+ * Keep in sync with ChatSchema.java / ChatDrainer. */
+function isStoredState(state) {
+    return state === "" || state === "image" || state === "audio";
+}
